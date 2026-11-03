@@ -1,5 +1,6 @@
 import Foundation
 
+/// Independently synthesized signals only; no recordings or score data.
 /// Run without initializing any audio device:
 /// swiftc -O -D PITCH_DETECTOR_CHECKS Sources/FretFlow/Tuner.swift Tests/TunerChecks.swift -o /tmp/fretflow-tuner-checks
 @main
@@ -114,6 +115,82 @@ struct TunerChecks {
         }
     }
 
+    static func checkTuningCoverage(rate: Double) {
+        let count = Int(rate * 0.17)
+        // Exercise every preset string, including alternate six-string and
+        // extended seven-string tunings. Detuning must survive the acoustic
+        // estimate: the tuning is an expectation here, never a detector input.
+        for tuning in GuitarTuning.presets {
+            for (index, midi) in tuning.notes.enumerated() {
+                let cents = index.isMultiple(of: 2) ? -19.0 : 17.0
+                let frequency = GuitarPitch.frequency(midi: midi) * pow(2, cents / 1_200)
+                let pluck = wave(frequency: frequency, sampleRate: rate, harmonics: [0.15, 1, 0.25, 0.12],
+                                 amplitude: 0.0012, decay: true, count: count)
+                let room = noise(count: count, amplitude: 0.00016, seed: UInt64(midi + index))
+                checkPitch(zip(pluck, room).map { $0 + $1 + 0.002 }, rate: rate, expected: frequency,
+                           label: "Preset \(tuning.id), string \(tuning.notes.count - index), \(rate)Hz",
+                           tolerance: 9, minimumConfidence: 0.85)
+            }
+        }
+
+        // Deliberately irregular custom layouts, including both allowed range
+        // endpoints. Decode an independent in-memory fixture without touching
+        // UserDefaults or any user's saved tunings.
+        let fixture = Data("""
+        [{"id":"synthetic-six","name":"Synthetic six","notes":[28,37,46,55,69,88]},
+         {"id":"synthetic-seven","name":"Synthetic seven","notes":[29,34,43,52,61,75,87]}]
+        """.utf8)
+        do {
+            let custom = try JSONDecoder().decode([GuitarTuning].self, from: fixture)
+            require(custom.map(\.notes.count) == [6, 7], "Both custom string counts decode")
+            let encoded = try JSONEncoder().encode(custom)
+            let restored = try JSONDecoder().decode([GuitarTuning].self, from: encoded)
+            require(restored == custom, "Custom IDs, names and string order survive a Codable round trip")
+            for tuning in restored {
+                for (index, midi) in tuning.notes.enumerated() {
+                    let reference = index.isMultiple(of: 2) ? 430.0 : 450.0
+                    let frequency = GuitarPitch.frequency(midi: midi, concertA: reference) * pow(2, -21.0 / 1_200)
+                    let pluck = wave(frequency: frequency, sampleRate: rate, harmonics: [1, 0.3, 0.15],
+                                     amplitude: 0.0008, decay: true, count: count)
+                    checkPitch(pluck, rate: rate, expected: frequency,
+                               label: "Custom \(tuning.id), MIDI \(midi), A=\(reference), \(rate)Hz", tolerance: 7)
+                }
+            }
+        } catch {
+            require(false, "Synthetic custom tuning Codable fixture failed: \(error)")
+        }
+
+        // Chromatic mode also receives harmonic-rich pitches between tuning
+        // targets. Cover every semitone independently of the preset table.
+        for midi in 28...88 {
+            let frequency = GuitarPitch.frequency(midi: midi, concertA: 442) * pow(2, -16.0 / 1_200)
+            checkPitch(wave(frequency: frequency, sampleRate: rate, harmonics: [1, 0.3, 0.15],
+                            amplitude: 0.0008, decay: true, count: count),
+                       rate: rate, expected: frequency, label: "Chromatic harmonic MIDI \(midi), \(rate)Hz", tolerance: 7)
+        }
+    }
+
+    static func checkHarmonicAmbiguity(rate: Double) {
+        let count = Int(rate * 0.17)
+        for midi in [28, 30, 35, 40, 45, 52, 64] {
+            let nominal = GuitarPitch.frequency(midi: midi)
+            // With only even partials there is no evidence for the nominal
+            // fundamental. Report the audible period, even for a low-string
+            // target; a lone third harmonic is equally ambiguous.
+            for (harmonics, multiple) in [([0.0, 1, 0, 0.3], 2.0), ([0.0, 0, 1], 3.0)] {
+                checkPitch(wave(frequency: nominal, sampleRate: rate, harmonics: harmonics,
+                                amplitude: 0.001, decay: true, count: count),
+                           rate: rate, expected: nominal * multiple,
+                           label: "Ambiguous \(multiple)x-only MIDI \(midi), \(rate)Hz", tolerance: 7)
+            }
+            // Adjacent second and third partials, in contrast, do supply
+            // periodic evidence for a missing fundamental.
+            checkPitch(wave(frequency: nominal, sampleRate: rate, harmonics: [0, 1, 0.7, 0.3],
+                            amplitude: 0.001, decay: true, count: count),
+                       rate: rate, expected: nominal, label: "Missing fundamental MIDI \(midi), \(rate)Hz", tolerance: 7)
+        }
+    }
+
     static func checkTracking() {
         var tracker = GuitarPitchTracker()
         var time = 0.0
@@ -173,10 +250,44 @@ struct TunerChecks {
         require(invalid.frequency == nil, "Invalid tracker timestamps must not leak a stale reading")
     }
 
-    static func checkStreamingPluck(rate: Double) {
+    static func checkOctaveTracking() {
+        // Both directions matter: retaining a low note during a spurious
+        // upper partial must not prevent a real downward octave transition.
+        for midi in [40, 45, 52, 64, 76] {
+            for multiple in [0.5, 2.0] {
+                var tracker = GuitarPitchTracker()
+                var time = 0.0
+                let original = GuitarPitch.frequency(midi: midi) * pow(2, 17.0 / 1_200)
+                func input(_ frequency: Double) -> PitchEstimate {
+                    time += 0.043
+                    return tracker.update(.init(frequency: frequency, confidence: 0.97, rms: 0.0007), at: time)
+                }
+                func near(_ estimate: PitchEstimate, _ target: Double) -> Bool {
+                    estimate.frequency.map { abs(GuitarPitch.cents(frequency: $0, target: target)) < 1 } ?? false
+                }
+                _ = input(original)
+                require(near(input(original), original), "Acquire detuned MIDI \(midi) before octave tracking")
+                for _ in 0..<3 {
+                    for _ in 0..<2 {
+                        let held = input(original * multiple)
+                        require(near(held, original) && held.confidence == 0,
+                                "Two-frame \(multiple)x error must hold position without confidence, MIDI \(midi)")
+                    }
+                    let recovered = input(original)
+                    require(near(recovered, original) && recovered.confidence > 0.9,
+                            "Confirmed MIDI \(midi) must recover after a brief octave error")
+                }
+                let changed = (0..<4).map { _ in input(original * multiple) }.last!
+                require(near(changed, original * multiple) && changed.confidence > 0.9,
+                        "Sustained \(multiple)x transition must settle within 172ms, MIDI \(midi)")
+            }
+        }
+    }
+
+    static func checkStreamingPluck(rate: Double, midi: Int, cents: Double = 0) {
         let window = Int(rate * 0.17), hop = 2_048, frames = 20
         let count = window + hop * (frames - 1)
-        let fundamental = GuitarPitch.frequency(midi: 30)
+        let fundamental = GuitarPitch.frequency(midi: midi) * pow(2, cents / 1_200)
         let background = noise(count: count, amplitude: 0.00012, seed: 95)
         let samples = (0..<count).map { index -> Float in
             let t = Double(index) / rate
@@ -191,9 +302,9 @@ struct TunerChecks {
             let tracked = tracker.update(estimate, at: Double(offset + window) / rate)
             if let frequency = tracked.frequency { readings.append(frequency) }
         }
-        require(readings.count >= 15, "A quiet low-string decay should stay readable through most of its sustain at \(rate)Hz")
+        require(readings.count >= 15, "A quiet MIDI \(midi) decay should stay readable through most of its sustain at \(rate)Hz")
         require(readings.allSatisfy { abs(GuitarPitch.cents(frequency: $0, target: fundamental)) < 10 },
-                "Overlapping microphone windows must not jump octaves during quiet sustain at \(rate)Hz")
+                "Overlapping microphone windows must not jump octaves during quiet MIDI \(midi) sustain at \(rate)Hz")
     }
 
     static func main() {
@@ -227,9 +338,13 @@ struct TunerChecks {
                 .map { $0 + $1 * 0.06 }
             checkPitch(guitarWithNoise, rate: rate, expected: lowB, label: "Low B with room noise at \(rate)")
             checkQuietGuitar(rate: rate)
-            checkStreamingPluck(rate: rate)
+            checkTuningCoverage(rate: rate)
+            checkHarmonicAmbiguity(rate: rate)
+            checkStreamingPluck(rate: rate, midi: 30)
+            for midi in [28, 30, 35, 40, 64] { checkStreamingPluck(rate: rate, midi: midi, cents: 13) }
         }
         checkTracking()
+        checkOctaveTracking()
         require(GuitarPitchDetector.estimate(samples: [], sampleRate: 48_000).frequency == nil, "Empty buffers rejected")
         require(GuitarPitchDetector.estimate(samples: [Float](repeating: 0.2, count: 8_192), sampleRate: 0).frequency == nil,
                 "Invalid sample rates rejected")
