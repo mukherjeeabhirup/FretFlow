@@ -6,6 +6,7 @@
     const hosts = ['youtube.com', 'www.youtube.com', 'youtube-nocookie.com', 'www.youtube-nocookie.com'];
     function isCurrentEmbed() {
         return window.top !== window && location.protocol === 'https:'
+            && !location.username && !location.password
             && hosts.includes(location.hostname.toLowerCase())
             && (!location.port || location.port === '443')
             && location.pathname === '/embed/' + config.videoID;
@@ -17,6 +18,8 @@
     const documentStartedAt = performance.timeOrigin;
     let sequence = 0;
     let stopped = false;
+    let observedVideo = null;
+    let waitingPosition = null;
     function post(values) {
         if (stopped || !isCurrentEmbed()) return;
         const handler = window.webkit?.messageHandlers?.youtubeClock;
@@ -25,25 +28,33 @@
             documentID, documentStartedAt,
             sequence: ++sequence, generatedAt: Date.now()}, values));
     }
-    function readClock() {
+    function readClock(event) {
         if (stopped || !isCurrentEmbed()) return;
         // These are conservative, best-effort ad indicators. An unrecognized
         // advertisement cannot be ruled out solely by its DOM class names.
         if (document.querySelector('.ad-showing, .ad-interrupting')) {
+            waitingPosition = null;
             post({kind: 'advertisement'});
             return;
         }
         const main = Array.from(document.querySelectorAll('video.html5-main-video'));
         const videos = main.length ? main : Array.from(document.querySelectorAll('video'));
-        if (videos.length !== 1) { post({kind: 'unavailable'}); return; }
+        if (videos.length !== 1) { waitingPosition = null; post({kind: 'unavailable'}); return; }
         const video = videos[0];
+        if (video !== observedVideo) { observedVideo = video; waitingPosition = null; }
         const position = video.currentTime, duration = video.duration, rate = video.playbackRate;
         if (!Number.isFinite(position) || !Number.isFinite(duration) || duration <= 0
             || !Number.isFinite(rate) || rate <= 0) {
             post({kind: 'unavailable'});
             return;
         }
-        post({kind: 'sample', position, duration, rate,
+        // waiting/stalled can precede a readyState change. Keep them gated
+        // until playing or actual forward movement, including native polls
+        // when the page's timers and playing event have been throttled.
+        if (event?.type === 'waiting' || event?.type === 'stalled') waitingPosition = position;
+        else if (['playing', 'seeking', 'seeked'].includes(event?.type) || video.paused || video.ended
+            || (waitingPosition !== null && position > waitingPosition + 0.002)) waitingPosition = null;
+        post({kind: 'sample', position, duration, rate, buffering: waitingPosition !== null,
             paused: video.paused, ended: video.ended, seeking: video.seeking,
             readyState: video.readyState});
     }
@@ -62,6 +73,7 @@
         document.addEventListener(name, readClock, true);
     }
     const ticker = window.setInterval(readClock, 50);
+    document.addEventListener('visibilitychange', readClock, true);
     window.addEventListener('pagehide', () => { stopped = true; window.clearInterval(ticker); }, {once: true});
     readClock();
 })();
