@@ -1,34 +1,31 @@
 # FretFlow
 
-A local macOS guitar practice app with interactive tabs, YouTube playback, a score-based click track, and a microphone tuner for 6- and 7-string guitars.
+A local macOS guitar practice app with PDF tab books, interactive Guitar Pro scores, YouTube playback, practice loops, and a microphone tuner.
 
 ## Supported files
 
-- **Guitar Pro:** `.gp`, `.gp3`, `.gp4`, `.gp5`, and `.gpx` for interactive tabs and score timing.
-- **PDF:** reference viewing only; automatic highlighting and score-based clicks require Guitar Pro files.
+- **PDF:** page navigation, zoom, saved reading position, and named song sections within books. Each section can have its own video and practice loops. PDF measure following and score-based clicks are not supported.
+- **Guitar Pro:** `.gp`, `.gp3`, `.gp4`, `.gp5`, and `.gpx`, with interactive notation, experimental recording alignment, and score-based clicks.
 
-Tab files are not included. Import your own using **Add tabs**.
+Import your own tabs with **Add tabs**. Originals are unchanged; personal scores are not included in this repository. Tab processing and tuner audio stay on your Mac.
 
 ## Requirements
 
-- macOS 14 or later.
-- Xcode 16+ or equivalent Command Line Tools with a macOS 15+ SDK to build.
-- Internet access for YouTube playback. Tabs and the tuner work locally.
+macOS 14+, Xcode 16+ or Command Line Tools with a macOS 15+ SDK, and internet access for YouTube. No API key is needed for playback or manual video links. Optional recording suggestions require a locally configured YouTube Data API key; see [verification and configuration](docs/VERIFICATION.md).
 
 ## Build and run
-
-From the project folder:
 
 ```sh
 zsh scripts/build.sh
 open dist/FretFlow.app
 ```
 
-## Getting started
+## Basic usage
 
-1. Choose **Add tabs**, import a file, and select it in the library.
-2. Link a matching YouTube video and press **Play**.
-3. Select a guitar part, enable the click track, adjust playback speed, or set an A/B loop.
-4. For tuning, open **Tuner**, choose a tuning or chromatic mode, and press **Start microphone**. Allow microphone access when prompted.
+1. **Add tabs**, then select a PDF or Guitar Pro score. Right-click a library entry to edit its title, artist, collection, or add a song using a PDF page range.
+2. Navigate PDF pages with the reader toolbar; choose a zoom or Fit. Reading position and zoom are saved per entry.
+3. Paste a YouTube URL and choose **Link video**, or search optional suggestions and confirm a recording. Playback position and accepted speed are saved per song and video, without autoplay on reopening.
+4. Set A/B around a section, give the loop a name, and save it. Choose a saved loop, then Play; optionally enable the four-beat count-in at your chosen tempo. PDF tempo is not inferred.
+5. Open **Tuner**, choose a 6/7-string preset, custom tuning, or chromatic mode, and start the MacBook microphone. Audio is processed locally.
 
-Automatic recording alignment is experimental; some recordings may need a manual timing adjustment. Audio from the tuner and playback analysis is processed locally and is not saved or uploaded.
+Run offline checks with `bash scripts/check.sh`. Linux runs Node checks and any available portable Swift checks; native UI, audio and live playback require a Mac. See [verification](docs/VERIFICATION.md) for limitations and manual checks.

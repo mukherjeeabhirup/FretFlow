@@ -224,6 +224,7 @@ final class YouTubeController: NSObject, ObservableObject, WKScriptMessageHandle
     private var sourceRevision: UInt64 = 0
     private var clockSource = YouTubeClockSource.none
     var clockSourceName: String { clockSource.rawValue }
+    var isPaused: Bool { [0, 2, 5].contains(lastPlayerState) }
     var clockRevision: UInt64 { clickClock.revision &+ sourceRevision }
     var hasFreshPlaybackClock: Bool {
         let now = ProcessInfo.processInfo.systemUptime
@@ -299,6 +300,10 @@ final class YouTubeController: NSObject, ObservableObject, WKScriptMessageHandle
         installMediaClock(configurationJSON: json)
         webView.stopLoading()
         webView.loadHTMLString(html.replacingOccurrences(of: "__FRETFLOW_CONFIG__", with: json), baseURL: appOrigin)
+        // Poll even if the first ready packet was queued while hidden. Waiting
+        // for an accepted packet to seed this gate could prevent recovery.
+        playerPollGate.received(identity: loadID, at: ProcessInfo.processInfo.systemUptime)
+        startClockPolling()
         let expectedLoad = loadID
         loadTimeout?.cancel()
         loadTimeout = Task { [weak self] in

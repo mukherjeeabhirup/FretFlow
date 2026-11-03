@@ -45,6 +45,7 @@ if [[ "$(uname -s)" != Darwin ]]; then
   echo "SKIP macOS framework checks: AppKit, PDFKit, WebKit, Combine and audio capture require macOS."
   exit 0
 fi
+run_swift pdf-library-checks -parse-as-library Sources/FretFlow/PDFLibraryModels.swift Sources/FretFlow/LibraryStore.swift Sources/FretFlow/PDFPracticeView.swift Tests/PDFLibraryChecks.swift
 run_swift youtube-checks Sources/FretFlow/PlaybackClock.swift Sources/FretFlow/YouTubeController.swift Tests/YouTubeChecks.swift
 run_swift recording-sync-checks Sources/FretFlow/RecordingSyncStore.swift Tests/RecordingSyncChecks.swift
 run_swift recording-auto-sync-checks Sources/FretFlow/RecordingAutoSync.swift Sources/FretFlow/RecordingOnsetMatcher.swift Sources/FretFlow/RecordingPlaybackClock.swift Tests/RecordingAutoSyncChecks.swift
