@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>FretFlow YouTube player</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; min-width: 200px; min-height: 200px; background: #111318; overflow: hidden; }
+    #player { display: block; width: 100%; height: 100%; min-width: 200px; min-height: 200px; border: 0; }
+  </style>
+</head>
+<body>
+  <div id="player"></div>
+  <script>
+    'use strict';
+    const config = __FRETFLOW_CONFIG__;
+    let player = null;
+    let ready = false;
+    let ticker = null;
+    function post(kind, details) {
+      const message = Object.assign({ kind, loadID: config.loadID, videoID: config.videoID }, details || {});
+      if (window.webkit && window.webkit.messageHandlers.youtube) window.webkit.messageHandlers.youtube.postMessage(message);
+    }
+    function snapshot() {
+      if (!ready || !player) return {};
+      let data = {};
+      try { if (typeof player.getVideoData === 'function') data = player.getVideoData() || {}; } catch (_) {}
+      return {
+        position: player.getCurrentTime() || 0,
+        duration: player.getDuration() || 0,
+        state: player.getPlayerState(),
+        rate: player.getPlaybackRate() || 1,
+        rates: player.getAvailablePlaybackRates() || [1],
+        title: typeof data.title === 'string' ? data.title : ''
+      };
+    }
+    function emit(kind) { try { post(kind, snapshot()); } catch (_) {} }
+    window.fretFlowPlayer = {
+      play() { if (ready) player.playVideo(); },
+      playFromStart() {
+        if (!ready) return;
+        // This explicit restart is one command. Unlike a normal seek, it must
+        // not queue a pause from the previous cued/paused player state.
+        player.seekTo(0, true);
+        player.playVideo();
+      },
+      pause() { if (ready) player.pauseVideo(); },
+      seek(seconds) {
+        if (!ready || !Number.isFinite(seconds)) return;
+        const oldState = player.getPlayerState();
+        player.seekTo(Math.max(0, seconds), true);
+        if (oldState === 2 || oldState === 5 || oldState === -1 || oldState === 0) player.pauseVideo();
+        emit('snapshot');
+      },
+      setRate(rate) { if (ready && Number.isFinite(rate)) player.setPlaybackRate(rate); }
+    };
+    window.onYouTubeIframeAPIReady = function () {
+      player = new YT.Player('player', {
+        width: '100%', height: '100%', videoId: config.videoID,
+        playerVars: {
+          autoplay: 0, controls: 1, playsinline: 1, enablejsapi: 1,
+          origin: config.origin, widget_referrer: config.origin, rel: 0
+        },
+        events: {
+          onReady() {
+            ready = true;
+            emit('ready');
+            ticker = window.setInterval(() => emit('snapshot'), 100);
+          },
+          onStateChange() { emit('state'); },
+          onPlaybackRateChange() { emit('rate'); },
+          onError(event) { post('error', { code: Number(event.data) || 0 }); },
+          onAutoplayBlocked() { post('blocked'); }
+        }
+      });
+    };
+    const script = document.createElement('script');
+    script.src = 'https://www.youtube.com/iframe_api';
+    script.onerror = () => post('error', { code: 0 });
+    document.head.appendChild(script);
+    window.addEventListener('pagehide', () => {
+      if (ticker) clearInterval(ticker);
+      if (player && ready) player.pauseVideo();
+    });
+  </script>
+</body>
+</html>

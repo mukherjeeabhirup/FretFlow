@@ -1,0 +1,117 @@
+FretFlow — local guitar practice for Mac
+
+Open FretFlow.app and use Add tabs to import your Guitar Pro scores or PDF
+books. Personal tab files are not included in the source repository. Existing
+local imports and any optional bundled scores appear in the library. Choose
+a score, link a YouTube video, then press Play. Video does not start automatically.
+
+Practice
+- Choose a guitar part above the score. Click a measure to seek there.
+- Follow keeps the current measure visible; turn it off to read ahead.
+- Turn on Click track in the player panel to hear the score's beats alongside
+  the video. Beat one has the strongest click; group starts have a lighter
+  accent. Written accent marks in the selected part are included, even between
+  the regular pulses. Changing parts updates its accents. Meter and tempo
+  changes, repeats, pickup bars, playback speed, seeking and loops are followed
+  automatically. It starts/stops with the video and has its own volume slider.
+- Clicks follow the written denominator: quarters in 4/4, eighths in 7/8 or 6/8,
+  and sixteenths in 17/16. The score's beam grouping supplies group accents;
+  where that information is absent, the click uses the meter's basic pulse
+  (groups of three in 6/8, 9/8 and 12/8).
+  Pickup beats keep their position in the written meter.
+  Click track is off on launch and is available for Guitar Pro scores.
+  Reported audio output delay is compensated automatically to align clicks
+  with the playhead. Both pause while playback is buffering or seeking.
+- Use the zoom menu to fit more notation on screen.
+- Select a YouTube playback speed from the Speed menu. The available speeds
+  depend on the video. The tab clock follows the actual accepted speed.
+- Set A and B to repeat a section, or choose Loop this measure. YouTube may
+  briefly buffer when a loop restarts.
+- Replace a song's video by pasting a YouTube link and choosing Link video.
+  The choice is saved for that song.
+- Recording sync automatically listens to the opening of a new linked video.
+  Allow FretFlow's macOS Screen & System Audio Recording permission when asked.
+  The app processes only its own playback audio in memory, with no microphone,
+  screenshots, saved audio or uploads. It restarts the video for a clean pass;
+  clicks wait while the opening is being matched. Pause or Stop matching cancels
+  the attempt, including while waiting for audio access.
+- A confident match shifts the tabs, click, seeking and loop targets together
+  and is saved for that exact score and video. Changing parts preserves it.
+  Sparse openings can take longer; uncertain matches leave timing unchanged.
+  Use Match start to retry or Fine adjustment to make a saved correction.
+  Positive adjustments move tabs/clicks later; negative moves them earlier.
+  Reset removes the saved correction. Changing timing clears an existing loop.
+
+Tuner
+- Open Tuner and press Start microphone. Allow microphone access when macOS asks.
+- Choose 6 strings, 7 strings, or Chromatic; pick a tuning preset.
+- Pluck one open string and let it ring. Click a string to lock its target,
+  or use automatic selection. The meter shows sharp/flat cents.
+- For an unplugged electric, keep the guitar close to the MacBook microphone
+  and mute the other strings. Quiet-note detection and confirmation of note
+  changes reduce jumps to overtones; the caption shows both heard and target
+  pitches. A selected target never forces the detected pitch into tune.
+- Create and save custom tunings. Notes are ordered from low to high.
+- Opening the tuner pauses video. Leaving the tuner stops microphone capture.
+- Capture explicitly uses the built-in MacBook microphone. It does not change
+  your system's selected input device. If access is denied, enable FretFlow in
+  System Settings > Privacy & Security > Microphone.
+- Audio is processed on this Mac and is never saved or uploaded.
+
+Add tabs
+- Add tabs accepts Guitar Pro .gp/.gp3/.gp4/.gp5/.gpx and PDF files.
+- Imports are copied into ~/Library/Application Support/FretFlow/Imports.
+- The original supplied files are unchanged. The bundled PDF is available
+  through Original PDF book; additional PDFs appear in the library.
+- PDFs are viewable references in this first version; they do not get automatic
+  measure highlighting. Use a corresponding Guitar Pro file for that.
+
+Timing and video limitations
+The app derives a timeline from the score's tempos, repeats, time signatures,
+and plausible section timestamps. Recording sync compares playback attacks
+with notes from all score parts to estimate a recording-specific start offset.
+It applies only confident matches; this is not recording identification or a
+guarantee of exact synchronization. Matching studio recordings work best;
+fades, ambiguous rhythms, sparse notes, live arrangements, edits and ads can
+prevent a reliable match. A start correction cannot fix tempo drift or edits
+later in a recording. Timestamp annotations rounded to seconds are approximate.
+YouTube needs internet. Ads, region restrictions, owner embedding restrictions,
+and sign-in requirements are controlled by YouTube. FretFlow does not download
+or separate video/audio. The visible embedded player retains its own controls.
+
+Build and verification
+The source is a native SwiftUI/AppKit application with a bundled alphaTab 1.8.4
+notation renderer. It targets macOS 14 or later; this build was verified on
+this Apple Silicon Mac. Build from the source directory with scripts/build.sh.
+The result is dist/FretFlow.app, locally signed for personal use.
+No Apple developer account, MusicKit setup, API key, or paid service is required.
+
+Checks completed during development:
+- All ten bundled scores: import, rendering, repeats, timeline order, track
+  selection, half-speed clock mapping, and repeated-measure clicks.
+- Native app window and WebKit score rendering, with captured previews.
+- Synthetic tuner/preset/recovery checks, including quiet decaying plucks,
+  dominant upper harmonics, room noise, real note changes, and transient octave errors.
+- YouTube URL validation and offline player behavior regressions.
+- Live YouTube playback, 0.5x speed, and seeking, all muted.
+- Click grids and score-to-app metadata checked across all 20 supplied scores;
+  scheduling/waveform checks plus an actual muted output-engine check.
+  Live YouTube clock checks cover half-speed playback, seeking, and immediate
+  pause cancellation. No microphone is used by the click track.
+- Recording matching, saved per-video corrections, safe cancellation/retry,
+  own-app audio envelopes, and precise video-clock validation. Playback must
+  actually advance before the app follows it; a frozen "playing" flag alone
+  cannot start matching or clicks.
+
+The installed 0.1.3 app passed a 10-second MacBook Pro microphone capture check:
+98 analysis updates, no disconnects/errors, and no late updates after stopping.
+782 synthetic tuner checks passed. No audio was saved. These checks do not
+replace trying the tuner with your own guitar and room acoustics.
+
+The 0.1.3 update also validates the ten supplied Handmade Cities / Other Things
+GPX scores and handles Heart's empty opening bar without a zero-length loop.
+Additional imported PDF books remain references; the original files are unchanged.
+
+Third-party notices: Resources/Web/THIRD-PARTY-NOTICES.txt.
+Video source links: Resources/Library/video-sources.txt.
+Your supplied tab material is included only in this personal local build.

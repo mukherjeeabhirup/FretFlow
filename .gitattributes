@@ -1,0 +1,2 @@
+# Keep upstream dependency files intact and out of repository language statistics.
+Resources/Web/vendor/** linguist-vendored=true -whitespace

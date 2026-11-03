@@ -1,0 +1,51 @@
+FretFlow bundled video links
+Verified against YouTube page metadata on October 14, 2026.
+
+These are official auto-generated studio-audio uploads on Plini's Official Artist Channel. Their descriptions identify Plini as the provider, artist, producer, and rights holder. They are links only; no audio or video files are bundled with FretFlow.
+
+plini-01 — Dorénavant
+https://www.youtube.com/watch?v=RLytwCPVpSk
+Album: An Unnameable Desire. Release date in video metadata: April 24, 2026.
+
+plini-02 — An Unnameable Desire
+https://www.youtube.com/watch?v=O3k1_FzkA4k
+Official studio-audio single. Release date in video metadata: March 31, 2026.
+This is the audio upload, distinct from the narrative music video WxMtUEWNDBc. Exact tab alignment remains adjustable in the app.
+
+plini-03 — Ciel
+https://www.youtube.com/watch?v=4OFvVDswQ7U
+Album: An Unnameable Desire. Features Jakub Zytecki. Release date: April 24, 2026.
+
+plini-04 — Canyon
+https://www.youtube.com/watch?v=18UOj39R8rM
+Album: An Unnameable Desire. Release date: April 24, 2026.
+
+plini-05 — Now & Then
+https://www.youtube.com/watch?v=VpgyhboiHmU
+Album: An Unnameable Desire. Release date: April 24, 2026.
+
+plini-06 — Manala
+https://www.youtube.com/watch?v=b3d5DEmSb2w
+Album: An Unnameable Desire. Release date: April 24, 2026.
+The album upload is preferred over the earlier single 5YSogGfvVTQ.
+
+plini-07 — Vespertine
+https://www.youtube.com/watch?v=aPxGbCaqaKU
+Album: An Unnameable Desire. Release date: April 24, 2026.
+
+plini-08 — Ruin
+https://www.youtube.com/watch?v=rk75LS3bAo4
+Album: An Unnameable Desire. Release date: April 24, 2026.
+
+plini-09 — After Everything
+https://www.youtube.com/watch?v=xZU6pLlGaWo
+Album: An Unnameable Desire. Release date: April 24, 2026.
+
+plini-10 — The Time Will Pass Anyway
+https://www.youtube.com/watch?v=-ueyK-vrMAc
+Album: An Unnameable Desire. Release date: April 24, 2026.
+
+Artist's album page, confirming track order and studio release:
+https://plini.bandcamp.com/album/an-unnameable-desire
+
+Metadata verification establishes song identity and official provenance. Playback availability and embedding permission can change; FretFlow shows YouTube's current player errors and lets the user replace the link. No playback or recording was used for this verification.

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>CFBundleName</key><string>FretFlow</string>
+    <key>CFBundleDisplayName</key><string>FretFlow</string>
+    <key>CFBundleIdentifier</key><string>com.local.FretFlow</string>
+    <key>CFBundleExecutable</key><string>FretFlow</string>
+    <key>CFBundleIconFile</key><string>FretFlow.icns</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>0.1.7</string>
+    <key>CFBundleVersion</key><string>8</string>
+    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <key>NSHighResolutionCapable</key><true/>
+    <key>NSMicrophoneUsageDescription</key><string>FretFlow listens to your guitar through the built-in microphone to show its pitch. Audio is processed on this Mac and is not saved or uploaded.</string>
+    <key>NSPrincipalClass</key><string>NSApplication</string>
+</dict></plist>

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: blob: data:; script-src 'self' file: blob:; style-src 'self' 'unsafe-inline' file:; font-src 'self' file: data:; connect-src 'self' file: blob:; worker-src 'self' file: blob:; img-src 'self' file: data: blob:;">
+  <title>FretFlow score</title>
+  <link rel="stylesheet" href="score.css">
+  <script src="vendor/alphaTab.min.js" defer></script>
+  <script src="timeline.js" defer></script>
+  <script src="notation-layout.js" defer></script>
+  <script src="score.js" defer></script>
+</head>
+<body>
+  <div id="status" role="status" aria-live="polite">Choose a song to begin.</div>
+  <main id="score-scroll" aria-label="Interactive guitar tablature">
+    <div id="score"></div>
+  </main>
+</body>
+</html>

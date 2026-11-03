@@ -1,0 +1,82 @@
+[
+  {
+    "id": "plini-01",
+    "title": "Dor\u00e9navant",
+    "artist": "Plini",
+    "filename": "01.gp",
+    "kind": "gp",
+    "isBundled": true
+  },
+  {
+    "id": "plini-02",
+    "title": "An Unnameable Desire",
+    "artist": "Plini",
+    "filename": "02.gp",
+    "kind": "gp",
+    "isBundled": true
+  },
+  {
+    "id": "plini-03",
+    "title": "Ciel",
+    "artist": "Plini",
+    "filename": "03.gp",
+    "kind": "gp",
+    "isBundled": true
+  },
+  {
+    "id": "plini-04",
+    "title": "Canyon",
+    "artist": "Plini",
+    "filename": "04.gp",
+    "kind": "gp",
+    "isBundled": true
+  },
+  {
+    "id": "plini-05",
+    "title": "Now & Then",
+    "artist": "Plini",
+    "filename": "05.gp",
+    "kind": "gp",
+    "isBundled": true
+  },
+  {
+    "id": "plini-06",
+    "title": "Manala",
+    "artist": "Plini",
+    "filename": "06.gp",
+    "kind": "gp",
+    "isBundled": true
+  },
+  {
+    "id": "plini-07",
+    "title": "Vespertine",
+    "artist": "Plini",
+    "filename": "07.gp",
+    "kind": "gp",
+    "isBundled": true
+  },
+  {
+    "id": "plini-08",
+    "title": "Ruin",
+    "artist": "Plini",
+    "filename": "08.gp",
+    "kind": "gp",
+    "isBundled": true
+  },
+  {
+    "id": "plini-09",
+    "title": "After Everything",
+    "artist": "Plini",
+    "filename": "09.gp",
+    "kind": "gp",
+    "isBundled": true
+  },
+  {
+    "id": "plini-10",
+    "title": "The Time Will Pass Anyway",
+    "artist": "Plini",
+    "filename": "10.gp",
+    "kind": "gp",
+    "isBundled": true
+  }
+]

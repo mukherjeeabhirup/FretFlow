@@ -1,0 +1,36 @@
+FretFlow includes alphaTab 1.8.4, by Daniel Kuschny and contributors.
+Package: @coderline/alphatab
+License: Mozilla Public License 2.0; full text in vendor/LICENSE.
+Upstream source for this version: https://github.com/CoderLine/alphaTab/tree/v1.8.4
+Package archive: https://registry.npmjs.org/@coderline/alphatab/-/alphatab-1.8.4.tgz
+The bundled alphaTab JavaScript has not been modified. Its rendered attribution is retained.
+FretFlow's notation-layout.js adds dedicated section-heading and measure-number
+lanes to prevent text colliding with palm-mute markings and ties. Upward effect
+slurs on inner chord strings move above the chord's outer frets and ties, with
+their labels and overflow calculated by the renderer. This adapter
+uses renderer extension points guarded to version 1.8.4; review its geometry
+regression checks before upgrading alphaTab. It does not alter the tab files.
+
+The bundled Bravura music font is distributed under the SIL Open Font License.
+Copyright and full license are in vendor/font/Bravura-OFL.txt.
+
+No CDN or remote script is used by the score renderer. FretFlow's separate video
+player, when enabled, connects to YouTube.
+
+Automatic synchronization uses the score's tempo map, time signatures, repeats,
+alternate endings, and plausible section timestamps. Whole-second timestamps
+are alignment hints, not sample-accurate markers. Invalid or out-of-order hints
+are ignored. A recording with a different introduction, edit, live tempo, or
+arrangement may not follow the supplied score. Optional recording alignment
+analyzes only FretFlow's own playback audio locally; raw audio is not saved.
+FretFlow does not claim automatic recognition of arbitrary PDF notation.
+
+The native host owns media transport and looping. setLoop stores the range for
+diagnostics; it does not independently seek or loop the embedded renderer.
+Track tuning metadata is sent from the renderer low string to high string.
+Measure index identifies the expanded playback occurrence. barIndex identifies
+the original printed measure (both zero based); occurrence is zero based.
+
+WebKit file origins do not reliably permit worker imports. File-based embedding
+uses one selected part, SVG partial rendering and lazy loading. Hosts serving
+these same bundled files from a supported local origin can enable worker layout.

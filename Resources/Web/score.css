@@ -1,0 +1,15 @@
+:root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #faf9f6; color: #2e3330; }
+* { box-sizing: border-box; }
+html, body { height: 100%; width: 100%; margin: 0; overflow: hidden; }
+#score-scroll { height: 100%; width: 100%; overflow: auto; padding: 24px 20px 90px; overscroll-behavior: contain; }
+#score { min-height: 100%; }
+#status { position: fixed; z-index: 5; inset: 0; display: flex; align-items: center; justify-content: center; padding: 36px; background: #faf9f6; color: #747a76; font-size: 15px; text-align: center; pointer-events: none; }
+#status[hidden] { display: none; }
+#status.error { color: #ad493d; }
+.at-cursor-wrapper { pointer-events: none; }
+.at-cursor-bar { background: rgba(56, 119, 95, 0.075); border-radius: 5px; }
+.at-cursor-beat { background: rgba(43, 123, 89, 0.45); width: 3px; }
+.at-highlight * { fill: #247856; stroke: #247856; }
+.at-selection div { background: rgba(64, 134, 102, 0.12); }
+.at-surface { cursor: pointer; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
