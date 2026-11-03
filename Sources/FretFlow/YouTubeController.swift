@@ -1,8 +1,10 @@
+import Foundation
+#if canImport(WebKit)
 import AppKit
 import Combine
-import Foundation
 import SwiftUI
 import WebKit
+#endif
 
 /// Pure validation and freshness tracking for the read-only embed media clock.
 struct YouTubeDOMClock {
@@ -85,7 +87,8 @@ struct YouTubeDOMClock {
                   let paused = payload["paused"] as? Bool, let ended = payload["ended"] as? Bool,
                   let seeking = payload["seeking"] as? Bool,
                   let readyState = payload["readyState"] as? Int, (0...4).contains(readyState) else { return nil }
-            let state = ended ? 0 : (paused ? 2 : (seeking || readyState < 3 ? 3 : 1))
+            let buffering = payload["buffering"] as? Bool ?? false
+            let state = ended ? 0 : (paused ? 2 : (seeking || buffering || readyState < 3 ? 3 : 1))
             event = .sample(Snapshot(position: min(position, duration), duration: duration, rate: rate,
                                      state: state, sampledAt: sampledAt))
         default: return nil
@@ -132,10 +135,11 @@ struct YouTubeClockPollGate {
     private var lastRequested: Double?
     private var serial: UInt64 = 0
     private var pending: UInt64?
+    private var pendingSince: Double?
 
     mutating func reset() {
         serial &+= 1
-        identity = nil; lastReceived = nil; lastRequested = nil; pending = nil
+        identity = nil; lastReceived = nil; lastRequested = nil; pending = nil; pendingSince = nil
     }
 
     mutating func received(identity: String, at now: Double) {
@@ -145,20 +149,73 @@ struct YouTubeClockPollGate {
     }
 
     mutating func request(at now: Double, establishingPlayback: Bool = false) -> UInt64? {
-        guard identity != nil, pending == nil, let lastReceived, now.isFinite,
+        guard now.isFinite else { return nil }
+        // WebKit may suspend a JavaScript completion while hidden. Retire it
+        // after a bounded wait so it cannot wedge polling for the whole load.
+        if let pendingSince, now - pendingSince >= 0.5 { pending = nil; self.pendingSince = nil }
+        guard identity != nil, pending == nil, let lastReceived,
               now - lastReceived >= (establishingPlayback ? 0.04 : 0.12),
               lastRequested.map({ now - $0 >= 0.04 }) ?? true else { return nil }
         serial &+= 1
         pending = serial
+        pendingSince = now
         lastRequested = now
         return serial
     }
 
     mutating func finish(_ ticket: UInt64) {
-        if pending == ticket { pending = nil }
+        if pending == ticket { pending = nil; pendingSince = nil }
     }
 }
 
+/// Timestamp the iframe bridge at generation, never at receipt. Native polls
+/// cannot turn queued background messages into a fresh transport observation.
+struct YouTubePlayerClock {
+    private var sequence = 0
+    private var generatedAt: Double?
+    private var sampledAt: Double?
+
+    mutating func reset() { self = YouTubePlayerClock() }
+
+    /// Terminal errors are lifecycle events, not clock observations. Keep their
+    /// sequence/generation ordering but accept delayed delivery for this load.
+    mutating func acceptTerminalError(_ payload: [String: Any], wallTime: Double) -> Bool {
+        guard payload["kind"] as? String == "error",
+              let incoming = payload["sequence"] as? Int, incoming > sequence,
+              let generated = (payload["generatedAt"] as? NSNumber)?.doubleValue,
+              generated.isFinite, generated > 0, wallTime.isFinite,
+              generated / 1_000 <= wallTime + 0.025,
+              generatedAt.map({ generated >= $0 }) ?? true else { return false }
+        sequence = incoming
+        generatedAt = generated
+        return true
+    }
+
+    mutating func accept(_ payload: [String: Any], now: Double, wallTime: Double) -> Double? {
+        guard let incomingSequence = payload["sequence"] as? Int, incomingSequence > sequence,
+              let generated = (payload["generatedAt"] as? NSNumber)?.doubleValue,
+              generated.isFinite, now.isFinite, wallTime.isFinite,
+              generatedAt.map({ generated >= $0 }) ?? true else { return nil }
+        let age = wallTime - generated / 1_000
+        guard age >= -0.025, age <= 0.3 else { return nil }
+        let measured = now - max(0, age)
+        guard sampledAt.map({ measured >= $0 - 0.002 }) ?? true else { return nil }
+        sequence = incomingSequence
+        generatedAt = generated
+        sampledAt = max(sampledAt ?? measured, measured)
+        return sampledAt
+    }
+}
+
+enum YouTubeClockSource: String {
+    case none, iframe, mediaElement, advertisement
+
+    func canSchedule(gate: PlaybackClockGate, media: YouTubeDOMClock, isReady: Bool, at now: Double) -> Bool {
+        isReady && self == .mediaElement && media.isFresh(at: now) && gate.canSchedule(at: now)
+    }
+}
+
+#if canImport(WebKit)
 @MainActor
 final class YouTubeController: NSObject, ObservableObject, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
     @Published private(set) var position: Double = 0
@@ -172,20 +229,26 @@ final class YouTubeController: NSObject, ObservableObject, WKScriptMessageHandle
     @Published private(set) var videoID = ""
     var onClockReset: (() -> Void)?
     var onPauseIntent: (() -> Void)?
+    /// Once per successful cue, after metadata/rates are applied. Install before
+    /// cue(), then restore persisted position/rate here without starting playback.
+    var onReady: (() -> Void)?
     private var clickClock = PlaybackClockGate()
     private var mediaClock = YouTubeDOMClock()
     private var pauseIntent = YouTubePauseIntentTracker()
     private var sourceRevision: UInt64 = 0
-    private var clockSource = "none"
-    var clockSourceName: String { clockSource }
+    private var clockSource = YouTubeClockSource.none
+    var clockSourceName: String { clockSource.rawValue }
+    var isPaused: Bool { [0, 2, 5].contains(lastPlayerState) }
     var clockRevision: UInt64 { clickClock.revision &+ sourceRevision }
     var hasFreshPlaybackClock: Bool {
         let now = ProcessInfo.processInfo.systemUptime
-        return isReady && !mediaClock.advertisement && clickClock.canSchedule(at: now)
-            && (clockSource != "mediaElement" || mediaClock.isFresh(at: now))
+        // The iframe API extrapolates its cached time even when no fresh media
+        // state arrives. It is useful for controls/display, but cannot prove
+        // decoding progress for clicks or recording.
+        return clockSource.canSchedule(gate: clickClock, media: mediaClock, isReady: isReady, at: now)
     }
     var hasPrecisePlaybackClock: Bool {
-        hasFreshPlaybackClock && clockSource == "mediaElement"
+        hasFreshPlaybackClock && clockSource == .mediaElement
             && mediaClock.isFresh(at: ProcessInfo.processInfo.systemUptime)
     }
 
@@ -201,6 +264,8 @@ final class YouTubeController: NSObject, ObservableObject, WKScriptMessageHandle
     private var mediaFrame: WKFrameInfo?
     private var clockPollTimer: Timer?
     private var clockPollGate = YouTubeClockPollGate()
+    private var playerPollGate = YouTubeClockPollGate()
+    private var playerClock = YouTubePlayerClock()
 
     lazy var webView: WKWebView = {
         let configuration = WKWebViewConfiguration()
@@ -249,6 +314,10 @@ final class YouTubeController: NSObject, ObservableObject, WKScriptMessageHandle
         installMediaClock(configurationJSON: json)
         webView.stopLoading()
         webView.loadHTMLString(html.replacingOccurrences(of: "__FRETFLOW_CONFIG__", with: json), baseURL: appOrigin)
+        // Poll even if the first ready packet was queued while hidden. Waiting
+        // for an accepted packet to seed this gate could prevent recovery.
+        playerPollGate.received(identity: loadID, at: ProcessInfo.processInfo.systemUptime)
+        startClockPolling()
         let expectedLoad = loadID
         loadTimeout?.cancel()
         loadTimeout = Task { [weak self] in
@@ -348,28 +417,43 @@ final class YouTubeController: NSObject, ObservableObject, WKScriptMessageHandle
             receiveMediaClock(event)
             return
         }
-        guard message.name == "youtube", message.frameInfo.isMainFrame,
+        guard message.name == "youtube", message.frameInfo.isMainFrame, hasLoadedVideo, !hasPlaybackError,
               let payload = message.body as? [String: Any],
               payload["loadID"] as? String == loadID,
               payload["videoID"] as? String == videoID,
               let kind = payload["kind"] as? String else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let wallTime = Date().timeIntervalSince1970
+        let playerSampleTime: Double
+        if kind == "error" {
+            // Identity and main-frame validation above still apply. An old
+            // error must stop playback, never be treated as fresh media time.
+            guard playerClock.acceptTerminalError(payload, wallTime: wallTime) else { return }
+            playerSampleTime = now
+        } else {
+            guard let sample = playerClock.accept(payload, now: now, wallTime: wallTime) else { return }
+            playerSampleTime = sample
+        }
+        playerPollGate.received(identity: loadID, at: ProcessInfo.processInfo.systemUptime)
+        startClockPolling()
         switch kind {
-        case "ready":
-            loadTimeout?.cancel()
-            isReady = true
-            hasPlaybackError = false
-            updateSnapshot(payload)
-            status = isPlaying ? "Playing on YouTube" : "Ready. Press Play to start."
-        case "snapshot", "state", "rate":
+        case "ready", "snapshot", "state", "rate":
             guard !hasPlaybackError else { return }
-            updateSnapshot(payload)
-            if kind == "state" { updatePlayerStatus() }
+            // A ready event may have spent too long queued while hidden. A
+            // later fresh snapshot can establish readiness without replaying
+            // that stale position or losing the caller's restore callback.
+            let becameReady = !isReady && (kind == "ready" || payload["ready"] as? Bool == true)
+            if becameReady { loadTimeout?.cancel(); isReady = true }
+            updateSnapshot(payload, at: playerSampleTime)
+            if becameReady || kind == "state" { updatePlayerStatus() }
+            if becameReady { onReady?() }
         case "blocked":
             clickClock.reset(); onClockReset?()
             isPlaying = false
             status = "Click Play inside the YouTube player to enable playback."
         case "error":
             clickClock.reset(); onClockReset?()
+            stopClockPolling()
             loadTimeout?.cancel()
             isReady = false
             isPlaying = false
@@ -418,6 +502,8 @@ final class YouTubeController: NSObject, ObservableObject, WKScriptMessageHandle
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { reportNavigationError(error) }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        stopClockPolling()
+        hasPlaybackError = true
         clickClock.reset(); onClockReset?()
         isReady = false
         isPlaying = false
@@ -434,7 +520,7 @@ final class YouTubeController: NSObject, ObservableObject, WKScriptMessageHandle
         }
     }
 
-    private func updateSnapshot(_ payload: [String: Any]) {
+    private func updateSnapshot(_ payload: [String: Any], at sampleTime: Double) {
         let previousRevision = clickClock.revision
         func finite(_ key: String) -> Double? {
             guard let value = (payload[key] as? NSNumber)?.doubleValue, value.isFinite else { return nil }
@@ -450,11 +536,11 @@ final class YouTubeController: NSObject, ObservableObject, WKScriptMessageHandle
         // media element timestamp or acknowledge transport on its behalf.
         let now = ProcessInfo.processInfo.systemUptime
         guard !mediaClock.takesPriority(at: now) else { return }
-        selectClockSource("iframe")
+        selectClockSource(.iframe)
         if let value = finite("position") { position = max(0, value) }
         if let value = finite("duration") { duration = max(0, value) }
         if duration > 0 { position = min(position, duration) }
-        sampledAt = now
+        sampledAt = sampleTime
         if let value = finite("rate"), value > 0 { rate = value }
         if let state = (payload["state"] as? NSNumber)?.intValue {
             lastPlayerState = state
@@ -472,7 +558,7 @@ final class YouTubeController: NSObject, ObservableObject, WKScriptMessageHandle
         switch event {
         case .sample(let sample):
             let previousRevision = clickClock.revision
-            selectClockSource("mediaElement")
+            selectClockSource(.mediaElement)
             position = sample.position
             duration = sample.duration
             rate = sample.rate
@@ -485,23 +571,24 @@ final class YouTubeController: NSObject, ObservableObject, WKScriptMessageHandle
             if clickClock.revision != previousRevision { onClockReset?() }
             if isReady { updatePlayerStatus() }
         case .advertisement:
-            if isPlaying || clockSource != "advertisement" {
+            if isPlaying || clockSource != .advertisement {
                 isPlaying = false
                 lastPlayerState = 3
                 // Preserve pending pause/seek/rate acknowledgments; the source
                 // revision alone invalidates queued clicks and analysis epochs.
-                selectClockSource("advertisement")
+                selectClockSource(.advertisement)
                 status = "Waiting for the linked video after YouTube's advertisement…"
             }
         case .unavailable:
-            if clockSource == "mediaElement" {
+            if clockSource == .mediaElement {
                 isPlaying = false
+                clickClock.invalidateSource()
                 onClockReset?()
             }
         }
     }
 
-    private func selectClockSource(_ source: String) {
+    private func selectClockSource(_ source: YouTubeClockSource) {
         guard source != clockSource else { return }
         clockSource = source
         clickClock.invalidateSource()
@@ -523,8 +610,9 @@ final class YouTubeController: NSObject, ObservableObject, WKScriptMessageHandle
     private func resetPlayback() {
         stopClockPolling()
         mediaClock.reset()
+        playerClock.reset()
         pauseIntent = YouTubePauseIntentTracker()
-        clockSource = "none"
+        clockSource = .none
         sourceRevision &+= 1
         clickClock.reset(); onClockReset?()
         isReady = false
@@ -541,6 +629,8 @@ final class YouTubeController: NSObject, ObservableObject, WKScriptMessageHandle
 
     private func reportNavigationError(_ error: Error) {
         guard hasLoadedVideo, (error as NSError).code != NSURLErrorCancelled else { return }
+        stopClockPolling()
+        hasPlaybackError = true
         clickClock.reset(); onClockReset?()
         isReady = false
         isPlaying = false
@@ -555,6 +645,10 @@ final class YouTubeController: NSObject, ObservableObject, WKScriptMessageHandle
         guard let documentID = mediaClock.documentID else { return }
         mediaFrame = frame
         clockPollGate.received(identity: loadID + "/" + documentID, at: ProcessInfo.processInfo.systemUptime)
+        startClockPolling()
+    }
+
+    private func startClockPolling() {
         guard clockPollTimer == nil else { return }
         let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.pollMediaClockIfNeeded() }
@@ -564,6 +658,7 @@ final class YouTubeController: NSObject, ObservableObject, WKScriptMessageHandle
     }
 
     private func pollMediaClockIfNeeded() {
+        pollPlayerClockIfNeeded()
         guard hasLoadedVideo, !hasPlaybackError, let frame = mediaFrame,
               YouTubeDOMClock.accepts(frameURL: frame.request.url, isMainFrame: frame.isMainFrame, videoID: videoID),
               let documentID = mediaClock.documentID else { return }
@@ -580,11 +675,25 @@ final class YouTubeController: NSObject, ObservableObject, WKScriptMessageHandle
         }
     }
 
+    private func pollPlayerClockIfNeeded() {
+        guard hasLoadedVideo, !hasPlaybackError,
+              !mediaClock.takesPriority(at: ProcessInfo.processInfo.systemUptime),
+              let data = try? JSONSerialization.data(withJSONObject: ["loadID": loadID, "videoID": videoID]),
+              let json = String(data: data, encoding: .utf8),
+              let ticket = playerPollGate.request(at: ProcessInfo.processInfo.systemUptime) else { return }
+        // This refreshes controls and the coarse display only. Cached iframe
+        // getters are never sufficient evidence for scheduling audio.
+        webView.evaluateJavaScript("window.fretFlowPlayer && window.fretFlowPlayer.readClock(\(json))") { [weak self] _, _ in
+            self?.playerPollGate.finish(ticket)
+        }
+    }
+
     private func stopClockPolling() {
         clockPollTimer?.invalidate()
         clockPollTimer = nil
         mediaFrame = nil
         clockPollGate.reset()
+        playerPollGate.reset()
     }
 
     private func installMediaClock(configurationJSON: String) {
@@ -639,3 +748,5 @@ private final class WeakYouTubeMessageHandler: NSObject, WKScriptMessageHandler 
         target?.userContentController(userContentController, didReceive: message)
     }
 }
+
+#endif

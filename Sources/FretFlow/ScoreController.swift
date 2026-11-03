@@ -227,17 +227,10 @@ struct ScoreView: NSViewRepresentable {
     func updateNSView(_ view: WKWebView, context: Context) {}
 }
 
-struct PDFReader: NSViewRepresentable {
+@MainActor
+struct PDFReader: View {
     let url: URL
-    func makeNSView(context: Context) -> PDFView {
-        let view = PDFView()
-        view.autoScales = true
-        view.displayMode = .singlePageContinuous
-        view.displaysPageBreaks = true
-        view.document = PDFDocument(url: url)
-        return view
-    }
-    func updateNSView(_ view: PDFView, context: Context) {
-        if view.document?.documentURL != url { view.document = PDFDocument(url: url) }
+    var body: some View {
+        PDFPracticeView(url: url, songID: "book:" + url.standardizedFileURL.path)
     }
 }

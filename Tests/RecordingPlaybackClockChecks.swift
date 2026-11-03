@@ -121,6 +121,11 @@ import Foundation
         precondition(frozen.mediaTime(for: 51.99, now: 53.25) == nil,
                      "A changed rate starts an epoch even if the caller misses a revision")
         precondition(abs(frozen.mediaTime(for: 52.02, now: 53.25)! - 4.01) < 1e-8)
+        frozen.observe(position: 8, rate: 0.5, host: 55, revision: 1)
+        precondition(!frozen.isReady && frozen.mediaTime(for: 54.9, now: 55) == nil,
+                     "A background observation gap cannot reuse an origin from before suspension")
+        settle(&frozen, position: 8, rate: 0.5, host: 55, revision: 1)
+        precondition(abs(frozen.mediaTime(for: 55.02, now: 56.25)! - 8.01) < 1e-8)
         frozen.observe(position: .nan, rate: 1, host: 53.3, revision: 2)
         precondition(!frozen.isReady && frozen.mediaTime(for: 53.3, now: 53.3) == nil)
         print("Recording playback clock checks passed: startup settling, buffered opening audio, monotonic 100 Hz capture through 12 seconds of jitter at three speeds, unstable-clock recovery, seek/rate epochs and frozen/stale bounds.")

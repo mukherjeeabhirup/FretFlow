@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import AppKit
 import WebKit
 
@@ -96,9 +97,20 @@ final class PracticeSession: ObservableObject {
     @Published private(set) var syncAdjustment: Double = 0
     @Published private(set) var syncSource: String?
     private var syncKey: String?
-    @Published var selectedID = "plini-01" { didSet { autoSync.cancel(); clickTrack.suspend() } }
+    @Published var selectedID = "plini-01" { didSet { cancelCountIn(); autoSync.cancel(); clickTrack.suspend() } }
+    @Published var namedLoops: [NamedPracticeLoop] = []
+    @Published var countInEnabled = false
+    @Published var countInBPM = 80.0
+    @Published private(set) var countInBeat: Int?
+    private let practiceStore = PracticeStateStore(enabled: !ProcessInfo.processInfo.arguments.contains("--smoke-test"))
+    private var activePracticeKey: String?
+    private var pendingPracticeRestore: SavedPracticeState?
+    private var practiceRestoreTarget: Double?
+    private var lastPracticeSave = 0.0
+    private var restoredAt = 0.0
+    private var countInTask: Task<Void, Never>?
     @Published var section = "Practice" {
-        didSet { if section != "Practice" { autoSync.cancel(); clickTrack.suspend(); player.pause() } }
+        didSet { if section != "Practice" { cancelCountIn(); savePractice(); autoSync.cancel(); clickTrack.suspend(); player.pause() } }
     }
     @Published var loopA: Double? { didSet { clickTrack.stop() } }
     @Published var loopB: Double? { didSet { clickTrack.stop() } }
@@ -106,6 +118,7 @@ final class PracticeSession: ObservableObject {
     @Published var linkError: String?
     @Published var showBook = false
     private var timer: Timer?
+    private var libraryChanges: AnyCancellable?
     private var started = false
     var selectedSong: LibrarySong? { library.songs.first { $0.id == selectedID } }
     var hasLinkedVideo: Bool { library.videoLinks[selectedID] != nil }
@@ -114,17 +127,21 @@ final class PracticeSession: ObservableObject {
     func start() {
         guard !started else { return }
         started = true
+        libraryChanges = library.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         score.onSeek = { [weak self] time in
             guard let self, self.hasLinkedVideo else { return }
-            self.player.seek(to: time)
+            self.seek(to: time)
         }
-        score.onPlay = { [weak self] in self?.player.play() }
+        score.onPlay = { [weak self] in self?.startPlayback() }
         score.onPause = { [weak self] in self?.player.pause() }
+        player.onReady = { [weak self] in self?.restorePracticeIfReady() }
         player.onClockReset = { [weak self] in
             self?.clickTrack.stop()
             self?.autoSync.playbackClockDidReset()
         }
         player.onPauseIntent = { [weak self] in
+            // The count-in first waits for its own pause to be acknowledged.
+            if self?.countInBeat != 0 { self?.cancelCountIn() }
             if self?.autoSync.isAnalyzing == true { self?.autoSync.cancel() }
         }
         autoSync.onAnalysisStarted = { [weak self] in self?.clickTrack.stop() }
@@ -154,6 +171,9 @@ final class PracticeSession: ObservableObject {
         if isSmokeTest {
             DispatchQueue.main.asyncAfter(deadline: .now() + 35) { [weak self] in self?.finishSmokeTest(timedOut: true) }
         }
+        if !isSmokeTest, let saved = UserDefaults.standard.string(forKey: "FretFlow.practice.selectedSong"),
+           library.songs.contains(where: { $0.id == saved }) { selectedID = saved }
+        if selectedSong == nil, let first = library.songs.first { selectedID = first.id }
         loadSelection()
         timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
@@ -162,7 +182,22 @@ final class PracticeSession: ObservableObject {
     }
 
     func loadSelection() {
-        guard let song = selectedSong else { return }
+        savePractice()
+        cancelCountIn()
+        guard let song = selectedSong else {
+            activePracticeKey = nil
+            pendingPracticeRestore = nil
+            practiceRestoreTarget = nil
+            namedLoops = []
+            autoSync.cancel(); clickTrack.setEvents([]); player.clear(); score.suspend()
+            return
+        }
+        if !isSmokeTest { UserDefaults.standard.set(song.id, forKey: "FretFlow.practice.selectedSong") }
+        activePracticeKey = PracticeStateStore.key(songID: song.id, videoID: library.videoLinks[song.id])
+        let saved = practiceStore.state(for: activePracticeKey!)
+        namedLoops = saved.loops
+        pendingPracticeRestore = saved
+        practiceRestoreTarget = nil
         autoSync.configure(identity: nil, referenceAttacks: [], scale: 1, inferredOffset: 0, hasSavedAlignment: false)
         clickTrack.setEvents([])
         player.clear()
@@ -181,14 +216,115 @@ final class PracticeSession: ObservableObject {
         }
         linkError = nil
         let changed = library.videoLinks[song.id] != id
+        savePractice()
+        cancelCountIn()
         library.saveVideo(id, for: song)
         if changed {
+            activePracticeKey = PracticeStateStore.key(songID: song.id, videoID: id)
+            let saved = practiceStore.state(for: activePracticeKey!)
+            pendingPracticeRestore = saved
+            practiceRestoreTarget = nil
+            namedLoops = saved.loops
             autoSync.cancel()
             clearLoop()
             restoreSync(for: song)
             if song.kind == "gp" { score.setAlignmentAdjustment(syncAdjustment) }
         }
         player.cue(videoID: id)
+    }
+
+    func savePractice() {
+        guard let key = activePracticeKey else { return }
+        var saved = practiceStore.state(for: key)
+        // Loading/cueing and offline failures must not overwrite a saved
+        // position with the player's reset-to-zero placeholder.
+        if pendingPracticeRestore == nil, player.isReady,
+           player.clockSourceName != "advertisement",
+           ProcessInfo.processInfo.systemUptime - restoredAt >= 2 {
+            if practiceRestoreTarget == nil { saved.position = player.interpolatedPosition }
+            // Accepted speed is independent of a seek still awaiting motion.
+            saved.rate = player.rate
+        }
+        saved.loops = namedLoops
+        practiceStore.save(saved, for: key)
+    }
+
+    func saveNamedLoop(_ name: String) {
+        guard let a = loopA, let b = loopB else { return }
+        let loop = NamedPracticeLoop(name: name.trimmingCharacters(in: .whitespacesAndNewlines), start: a, end: b)
+        guard loop.isValid else { return }
+        namedLoops.append(loop)
+        savePractice()
+    }
+
+    func selectNamedLoop(_ loop: NamedPracticeLoop) {
+        guard loop.isValid else { return }
+        cancelCountIn()
+        loopA = loop.start; loopB = loop.end; looping = true
+        player.pause()
+        seek(to: loop.start)
+    }
+
+    func removeNamedLoop(_ id: String) {
+        namedLoops.removeAll { $0.id == id }
+        savePractice()
+    }
+
+    func cancelCountIn() {
+        countInTask?.cancel()
+        countInTask = nil
+        countInBeat = nil
+    }
+
+    func seek(to time: Double) {
+        cancelCountIn()
+        pendingPracticeRestore = nil
+        practiceRestoreTarget = nil
+        player.seek(to: time)
+    }
+
+    func setPlaybackRate(_ rate: Double) {
+        cancelCountIn()
+        player.setRate(rate)
+    }
+
+    func togglePlayback() {
+        if countInBeat != nil { cancelCountIn(); return }
+        if player.isPlaying { player.pause() } else { startPlayback() }
+    }
+
+    func startPlayback() {
+        cancelCountIn()
+        guard player.isReady, hasLinkedVideo, section == "Practice" else { return }
+        let plan = PracticeCountIn(beats: 4, bpm: countInBPM)
+        guard countInEnabled, plan.isValid else { player.play(); return }
+        player.pause()
+        countInBeat = 0
+        let expectedID = selectedID
+        countInTask = Task { @MainActor [weak self] in
+            // Never count over a recording that is still pausing/buffering.
+            let deadline = ProcessInfo.processInfo.systemUptime + 3
+            while let self, !self.player.isPaused {
+                guard !Task.isCancelled, self.selectedID == expectedID,
+                      ProcessInfo.processInfo.systemUptime < deadline else {
+                    self.cancelCountIn(); return
+                }
+                do { try await Task.sleep(nanoseconds: 50_000_000) }
+                catch { return }
+            }
+            for beat in 1...plan.beats {
+                guard let self, !Task.isCancelled, self.selectedID == expectedID,
+                      self.section == "Practice" else { return }
+                self.countInBeat = beat
+                NSSound.beep()
+                do { try await Task.sleep(nanoseconds: UInt64(plan.interval * 1_000_000_000)) }
+                catch { return }
+            }
+            guard let self, !Task.isCancelled, self.selectedID == expectedID else { return }
+            self.countInBeat = nil
+            self.countInTask = nil
+            self.player.play()
+        }
     }
 
     private func restoreSync(for song: LibrarySong) {
@@ -231,10 +367,32 @@ final class PracticeSession: ObservableObject {
     func setLoopForCurrentMeasure() {
         guard let bar = score.measures.last(where: { $0.start <= player.position }), bar.end > bar.start else { return }
         loopA = bar.start; loopB = bar.end; looping = true
-        player.seek(to: bar.start)
+        seek(to: bar.start)
+    }
+
+    private func restorePracticeIfReady() {
+        guard player.isReady, player.duration > 0, player.clockSourceName != "advertisement",
+              let saved = pendingPracticeRestore else { return }
+        pendingPracticeRestore = nil
+        restoredAt = ProcessInfo.processInfo.systemUptime
+        if player.availableRates.contains(saved.rate) { player.setRate(saved.rate) }
+        if saved.position > 0 {
+            let target = min(saved.position, player.duration)
+            practiceRestoreTarget = target
+            player.seek(to: target)
+        }
     }
 
     func tick() {
+        restorePracticeIfReady()
+        if let target = practiceRestoreTarget, player.isReady,
+           PracticeRestorePolicy.isAcknowledged(target: target, position: player.position,
+                                                playbackIsAdvancing: player.hasFreshPlaybackClock) {
+            practiceRestoreTarget = nil
+        }
+        if countInBeat != nil && (!player.isReady || (countInBeat != 0 && player.isPlaying)) { cancelCountIn() }
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - lastPracticeSave >= 2 { savePractice(); lastPracticeSave = now }
         guard section == "Practice", hasLinkedVideo else { clickTrack.suspend(); return }
         let time = player.interpolatedPosition
         if !isSmokeTest {
@@ -299,6 +457,9 @@ struct MainView: View {
             }
         }
         .onAppear { session.start() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            session.savePractice()
+        }
         .onChange(of: session.selectedID) { _, _ in session.loadSelection() }
         .sheet(isPresented: $session.showBook) {
             VStack(spacing: 0) {
@@ -319,6 +480,7 @@ struct Sidebar: View {
     @ObservedObject var session: PracticeSession
     @ObservedObject var library: LibraryStore
     @UIState private var search = ""
+    @UIState private var editingSong: LibrarySong?
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 10) {
@@ -345,7 +507,9 @@ struct Sidebar: View {
             TextField("Find a song", text: $search).textFieldStyle(.roundedBorder)
             ScrollView {
                 LazyVStack(spacing: 4) {
-                    ForEach(library.songs.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) }) { song in
+                    ForEach(library.songs.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search)
+                        || $0.artist.localizedCaseInsensitiveContains(search)
+                        || ($0.collection?.localizedCaseInsensitiveContains(search) ?? false) }) { song in
                         Button {
                             session.selectedID = song.id
                             session.section = "Practice"
@@ -354,13 +518,25 @@ struct Sidebar: View {
                                 Image(systemName: song.kind == "pdf" ? "doc.richtext" : "music.note").frame(width: 14).padding(.top, 3)
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(song.title).font(.system(size: 12, weight: .medium)).lineLimit(2)
-                                    Text(song.artist).font(.system(size: 10)).foregroundStyle(.secondary)
+                                    Text([song.artist, song.collection ?? ""].filter { !$0.isEmpty }.joined(separator: " · "))
+                                        .font(.system(size: 10)).foregroundStyle(.secondary)
                                 }
                                 Spacer(minLength: 0)
                                 if library.videoLinks[song.id] != nil { Image(systemName: "link").font(.system(size: 9)).foregroundStyle(.secondary) }
                             }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
                                 .background(session.selectedID == song.id ? Color.primary.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 8))
                         }.buttonStyle(.plain)
+                        .contextMenu {
+                            Button("Edit details / book sections") { editingSong = song }
+                            if !song.isBundled {
+                                Button("Remove from library") {
+                                    session.savePractice()
+                                    if library.removeEntry(song), session.selectedID == song.id {
+                                        session.selectedID = library.songs.first?.id ?? ""
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -371,6 +547,9 @@ struct Sidebar: View {
             }
             Text("Tabs & tuner stay on this Mac.\nYouTube needs an internet connection.").font(.system(size: 10)).foregroundStyle(.secondary).lineSpacing(3)
         }.padding(18).background(Color(nsColor: .windowBackgroundColor))
+        .sheet(item: $editingSong) { song in
+            LibraryDetailsView(library: library, song: song) { id in session.selectedID = id }
+        }
     }
 }
 
@@ -414,9 +593,9 @@ struct PracticeView: View {
                             Text("Click a measure to seek")
                         }.font(.system(size: 10)).foregroundStyle(.secondary).padding(10)
                     } else if let song = session.selectedSong {
-                        Text("PDF reference • automatic highlighting requires a Guitar Pro score")
-                            .font(.caption).foregroundStyle(.secondary).padding(12)
-                        PDFReader(url: session.library.url(for: song))
+                        PDFPracticeView(url: session.library.url(for: song), songID: song.id,
+                                        pageStart: song.pageStart, pageEnd: song.pageEnd)
+                            .id(song.id)
                     }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 Divider()
@@ -449,6 +628,7 @@ struct PlayerPanel: View {
     @UIState private var linkText = ""
     @UIState private var seeking = false
     @UIState private var seekPosition = 0.0
+    @UIState private var loopName = ""
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -470,6 +650,12 @@ struct PlayerPanel: View {
                             if let url = parts.url { NSWorkspace.shared.open(url) }
                         }
                     }.controlSize(.small)
+                    DisclosureGroup("Recording suggestions") {
+                        VideoSuggestionsView(title: session.selectedSong?.title ?? "",
+                                             artist: session.selectedSong?.artist ?? "",
+                                             onSelect: { session.linkVideo($0) })
+                            .id(session.selectedID)
+                    }.font(.caption)
                     if let error = session.linkError { Text(error).font(.caption).foregroundStyle(.red) }
                 }
                 Text(player.status).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
@@ -499,7 +685,7 @@ struct PlayerPanel: View {
             Slider(value: Binding(get: { seeking ? seekPosition : min(player.position, max(1, player.duration)) }, set: { seekPosition = $0 }), in: 0...max(1, player.duration)) { editing in
                 if editing { seekPosition = player.position }
                 seeking = editing
-                if !editing { player.seek(to: seekPosition) }
+                if !editing { session.seek(to: seekPosition) }
             }.disabled(!player.isReady || !session.hasLinkedVideo)
             HStack {
                 Text(formatTime(seeking ? seekPosition : player.position))
@@ -507,16 +693,31 @@ struct PlayerPanel: View {
                 Text(formatTime(player.duration))
             }.font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
             HStack(spacing: 20) {
-                Button { player.seek(to: max(0, player.position - 5)) } label: { Image(systemName: "gobackward.5").font(.title3) }
-                Button { player.togglePlayback() } label: {
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").font(.title3).frame(width: 36, height: 30)
+                Button { session.seek(to: max(0, player.position - 5)) } label: { Image(systemName: "gobackward.5").font(.title3) }
+                Button { session.togglePlayback() } label: {
+                    Image(systemName: player.isPlaying || session.countInBeat != nil ? "pause.fill" : "play.fill").font(.title3).frame(width: 36, height: 30)
                 }.buttonStyle(.borderedProminent)
-                Button { player.seek(to: player.position + 5) } label: { Image(systemName: "goforward.5").font(.title3) }
+                Button { session.seek(to: player.position + 5) } label: { Image(systemName: "goforward.5").font(.title3) }
             }.disabled(!player.isReady || !session.hasLinkedVideo)
+            Toggle("Four-beat count-in", isOn: $session.countInEnabled)
+                .font(.caption).onChange(of: session.countInEnabled) { _, _ in session.cancelCountIn() }
+            if session.countInEnabled {
+                HStack {
+                    Text("Count-in BPM").font(.caption)
+                    Stepper(value: $session.countInBPM, in: 30...240, step: 5) {
+                        Text("\(Int(session.countInBPM))").monospacedDigit()
+                    }
+                    if let beat = session.countInBeat {
+                        Text(beat == 0 ? "Pausing…" : "\(beat) / 4").monospacedDigit()
+                    }
+                }.font(.caption)
+                Text("Uses system alert sounds at this tempo before Play; PDF tempo is not inferred.")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+            }
             HStack {
                 Label("Speed", systemImage: "speedometer").font(.caption)
                 Spacer()
-                Picker("Speed", selection: Binding(get: { player.rate }, set: { player.setRate($0) })) {
+                Picker("Speed", selection: Binding(get: { player.rate }, set: { session.setPlaybackRate($0) })) {
                     ForEach(player.availableRates.isEmpty ? [1.0] : player.availableRates, id: \.self) { value in
                         Text(String(format: "%g×", value)).tag(value)
                     }
@@ -553,7 +754,21 @@ struct PlayerPanel: View {
                 Button("Clear") { session.loopA = nil; session.loopB = nil; session.looping = false }
                     .buttonStyle(.plain).foregroundStyle(.secondary)
             }.font(.caption)
-            Text("Set A and B around any section. Loops may briefly buffer at the restart.")
+            HStack {
+                TextField("Name this loop", text: $loopName).textFieldStyle(.roundedBorder)
+                Button("Save") { session.saveNamedLoop(loopName); loopName = "" }
+                    .disabled(loopName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || session.loopA == nil || session.loopB == nil)
+            }.controlSize(.small)
+            ForEach(session.namedLoops) { loop in
+                HStack {
+                    Button("\(loop.name)  \(formatTime(loop.start))–\(formatTime(loop.end))") { session.selectNamedLoop(loop) }
+                        .disabled(!player.isReady)
+                    Spacer()
+                    Button { session.removeNamedLoop(loop.id) } label: { Image(systemName: "trash") }
+                        .buttonStyle(.plain).help("Delete saved loop")
+                }.font(.caption)
+            }
+            Text("Choose a saved loop, then Play. Set A and B around any section. Loops may briefly buffer at the restart.")
                 .font(.system(size: 10)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }

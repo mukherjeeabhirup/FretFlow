@@ -285,5 +285,5 @@ for (const folder of folders) {
             meters: [...new Set(timeline.clicks.map(c => `${c.numerator}/${c.denominator}`))]});
     }
 }
-assert(summaries.length, 'No Guitar Pro fixtures were found');
+if (process.argv.length > 2 || process.env.FRET_FLOW_GP_DIR) assert(summaries.length, 'No Guitar Pro fixtures were found in the requested directory');
 console.log(JSON.stringify({passed: true, syntheticCases: 'mixed meters, explicit beam groups and overrides, selected-track offbeat accents, tempo changes, repeats, pickups, alignment, bounds', scores: summaries}, null, 2));

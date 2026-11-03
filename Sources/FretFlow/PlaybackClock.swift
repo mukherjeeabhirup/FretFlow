@@ -46,7 +46,13 @@ struct PlaybackClockGate {
 
     mutating func observe(position newPosition: Double, rate newRate: Double,
                           isPlaying: Bool, isPaused: Bool = false, at now: TimeInterval) {
-        guard newPosition.isFinite, newRate.isFinite, newRate > 0, now.isFinite else { reset(); return }
+        guard newPosition.isFinite, newPosition >= 0, newRate.isFinite,
+              (0.125...4).contains(newRate), now.isFinite else {
+            // A bad bridge packet must not acknowledge or discard transport
+            // intent (especially a pending pause).
+            invalidateSample()
+            return
+        }
         let previouslyAllowed = canSchedule(at: now)
         let awaitingTransport = waitingForPause || pendingSeek != nil || pendingRate != nil
         if let sampleTime {

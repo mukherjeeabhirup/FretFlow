@@ -140,16 +140,20 @@ struct YouTubeDOMClockChecks {
         var seeking = packet(6, 12, 1_700_000_000_250); seeking["seeking"] = true
         observe(seeking, now: 100.25, wall: 1_700_000_000.25)
         require(stateClock.snapshot?.state == 3 && !gate.canSchedule(at: 100.25), "A seek in progress emitted a running clock")
-        var waiting = packet(7, 12, 1_700_000_000_300); waiting["readyState"] = 2
+        var explicitWaiting = packet(7, 12, 1_700_000_000_275); explicitWaiting["buffering"] = true
+        observe(explicitWaiting, now: 100.275, wall: 1_700_000_000.275)
+        require(stateClock.snapshot?.state == 3 && !gate.canSchedule(at: 100.275),
+                "Waiting before readyState changes must stop scheduling")
+        var waiting = packet(8, 12, 1_700_000_000_300); waiting["readyState"] = 2
         observe(waiting, now: 100.3, wall: 1_700_000_000.3)
         require(stateClock.snapshot?.state == 3 && !gate.canSchedule(at: 100.3), "Buffering media emitted a running clock")
-        var slow = packet(8, 12.025, 1_700_000_000_350); slow["rate"] = 0.5
+        var slow = packet(9, 12.025, 1_700_000_000_350); slow["rate"] = 0.5
         observe(slow, now: 100.35, wall: 1_700_000_000.35)
         require(stateClock.snapshot?.rate == 0.5 && !gate.canSchedule(at: 100.35), "Resumed media must demonstrate motion at the observed rate")
-        slow = packet(9, 12.05, 1_700_000_000_400); slow["rate"] = 0.5
+        slow = packet(10, 12.05, 1_700_000_000_400); slow["rate"] = 0.5
         observe(slow, now: 100.4, wall: 1_700_000_000.4)
         require(gate.canSchedule(at: 100.4), "Observed media progress did not resume correctly")
-        var ended = packet(10, 100, 1_700_000_000_450); ended["ended"] = true
+        var ended = packet(11, 100, 1_700_000_000_450); ended["ended"] = true
         observe(ended, now: 100.45, wall: 1_700_000_000.45)
         require(stateClock.snapshot?.state == 0 && !gate.canSchedule(at: 100.45), "Ended media clock kept running")
         stateClock.reset()
@@ -166,6 +170,7 @@ struct YouTubeDOMClockChecks {
                 "A user pause during buffering was lost")
         require(!pauseIntent.observe(state: 1) && !pauseIntent.observe(state: 0) && !pauseIntent.observe(state: 2),
                 "Video completion was mistaken for pause intent")
+        #if canImport(WebKit)
         var events: [String] = []
         let controller = YouTubeController()
         controller.onPauseIntent = { events.append("pause") }
@@ -175,6 +180,7 @@ struct YouTubeDOMClockChecks {
         events.removeAll()
         controller.seek(to: 0); controller.play(); controller.playFromStart()
         require(!events.contains("pause"), "Internal seek-and-play restart emitted pause intent")
+        #endif
         print("YouTube media-clock checks passed (\(checks)): frame/document isolation, timestamps, source priority, ads and pause intent.")
     }
 }

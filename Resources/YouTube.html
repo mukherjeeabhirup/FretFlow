@@ -18,8 +18,13 @@
     let player = null;
     let ready = false;
     let ticker = null;
+    let sequence = 0;
+    let stopped = false;
+    let terminalError = null;
     function post(kind, details) {
-      const message = Object.assign({ kind, loadID: config.loadID, videoID: config.videoID }, details || {});
+      if (stopped) return;
+      const message = Object.assign({ kind, loadID: config.loadID, videoID: config.videoID,
+        sequence: ++sequence, generatedAt: Date.now() }, details || {});
       if (window.webkit && window.webkit.messageHandlers.youtube) window.webkit.messageHandlers.youtube.postMessage(message);
     }
     function snapshot() {
@@ -27,6 +32,7 @@
       let data = {};
       try { if (typeof player.getVideoData === 'function') data = player.getVideoData() || {}; } catch (_) {}
       return {
+        ready: true,
         position: player.getCurrentTime() || 0,
         duration: player.getDuration() || 0,
         state: player.getPlayerState(),
@@ -35,8 +41,22 @@
         title: typeof data.title === 'string' ? data.title : ''
       };
     }
-    function emit(kind) { try { post(kind, snapshot()); } catch (_) {} }
+    function fail(code) {
+      terminalError = Number(code) || 0;
+      post('error', {code: terminalError});
+    }
+    function emit(kind) {
+      if (terminalError !== null) { post('error', {code: terminalError}); return; }
+      try { post(kind, snapshot()); } catch (_) {}
+    }
     window.fretFlowPlayer = {
+      readClock(expected) {
+        if (stopped || expected?.loadID !== config.loadID || expected?.videoID !== config.videoID) return false;
+        if (terminalError !== null) { post('error', {code: terminalError}); return true; }
+        if (!ready) return false;
+        emit('snapshot');
+        return true;
+      },
       play() { if (ready) player.playVideo(); },
       playFromStart() {
         if (!ready) return;
@@ -56,6 +76,7 @@
       setRate(rate) { if (ready && Number.isFinite(rate)) player.setPlaybackRate(rate); }
     };
     window.onYouTubeIframeAPIReady = function () {
+      if (stopped || terminalError !== null) return;
       player = new YT.Player('player', {
         width: '100%', height: '100%', videoId: config.videoID,
         playerVars: {
@@ -64,22 +85,24 @@
         },
         events: {
           onReady() {
+            if (stopped || ready || terminalError !== null) return;
             ready = true;
             emit('ready');
             ticker = window.setInterval(() => emit('snapshot'), 100);
           },
           onStateChange() { emit('state'); },
           onPlaybackRateChange() { emit('rate'); },
-          onError(event) { post('error', { code: Number(event.data) || 0 }); },
+          onError(event) { fail(event.data); },
           onAutoplayBlocked() { post('blocked'); }
         }
       });
     };
     const script = document.createElement('script');
     script.src = 'https://www.youtube.com/iframe_api';
-    script.onerror = () => post('error', { code: 0 });
+    script.onerror = () => fail(0);
     document.head.appendChild(script);
     window.addEventListener('pagehide', () => {
+      stopped = true;
       if (ticker) clearInterval(ticker);
       if (player && ready) player.pauseVideo();
     });

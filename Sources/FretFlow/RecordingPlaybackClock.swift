@@ -37,7 +37,7 @@ struct RecordingPlaybackClock {
 
     mutating func observe(position: Double, rate: Double, host: Double, revision: UInt64) {
         guard position.isFinite, position >= 0, rate.isFinite, (0.125...4).contains(rate), host.isFinite else { reset(); return }
-        if self.revision != revision || (latest.map { host <= $0.host || $0.rate != rate } ?? false) {
+        if self.revision != revision || (latest.map { host <= $0.host || host - $0.host > 0.3 || $0.rate != rate } ?? false) {
             reset()
         }
         self.revision = revision
