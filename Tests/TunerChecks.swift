@@ -149,7 +149,11 @@ struct TunerChecks {
             for tuning in restored {
                 for (index, midi) in tuning.notes.enumerated() {
                     let reference = index.isMultiple(of: 2) ? 430.0 : 450.0
-                    let frequency = GuitarPitch.frequency(midi: midi, concertA: reference) * pow(2, -21.0 / 1_200)
+                    // MIDI 28 at A=430 detuned downward would fall below
+                    // the detector's 40 Hz floor. Keep positive fixtures in range.
+                    let cents = midi == 28 ? 21.0 : -21.0
+                    let frequency = GuitarPitch.frequency(midi: midi, concertA: reference) * pow(2, cents / 1_200)
+                    require((40...1_400).contains(frequency), "Positive custom fixture must be inside the detector range")
                     let pluck = wave(frequency: frequency, sampleRate: rate, harmonics: [1, 0.3, 0.15],
                                      amplitude: 0.0008, decay: true, count: count)
                     checkPitch(pluck, rate: rate, expected: frequency,

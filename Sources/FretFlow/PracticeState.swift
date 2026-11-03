@@ -66,3 +66,12 @@ struct PracticeCountIn {
     var interval: Double { 60 / bpm }
     var isValid: Bool { (1...8).contains(beats) && bpm.isFinite && (30...240).contains(bpm) }
 }
+
+/// A seek can settle on a nearby keyframe or be refused. Fresh observed motion
+/// establishes the actual position; a frozen cued/offline zero does not.
+enum PracticeRestorePolicy {
+    static func isAcknowledged(target: Double, position: Double, playbackIsAdvancing: Bool) -> Bool {
+        guard target.isFinite, target >= 0, position.isFinite, position >= 0 else { return false }
+        return abs(position - target) < 0.5 || playbackIsAdvancing
+    }
+}

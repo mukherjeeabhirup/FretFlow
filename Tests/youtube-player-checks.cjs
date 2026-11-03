@@ -75,6 +75,23 @@ f.advance(50); f.poll(); assert.equal(f.messages.at(-1).position, 28.2, 'Frozen 
 f.observed = {state: 2}; f.options.events.onStateChange(); assert.equal(f.messages.at(-1).state, 2);
 f.options.events.onAutoplayBlocked(); assert.equal(f.messages.at(-1).kind, 'blocked');
 f.options.events.onError({data: 153}); assert.equal(f.messages.at(-1).code, 153);
+// A terminal error survives a delayed bridge message and timer suspension.
+const errorTime = f.messages.at(-1).generatedAt;
+f.advance(5_000);
+assert.equal(f.poll(), true);
+assert.equal(f.messages.at(-1).kind, 'error');
+assert.equal(f.messages.at(-1).code, 153);
+assert(f.messages.at(-1).generatedAt > errorTime);
+f.ticks[0]();
+assert.equal(f.messages.at(-1).kind, 'error', 'Later snapshots must not conceal a terminal error');
+const failedSetup = fixture();
+failedSetup.scripts[0].onerror();
+failedSetup.advance(5_000);
+assert.equal(failedSetup.poll(), true, 'An API load failure before ready must remain pollable');
+assert.equal(failedSetup.messages.at(-1).kind, 'error');
+assert.equal(failedSetup.messages.at(-1).code, 0);
+failedSetup.window.onYouTubeIframeAPIReady();
+assert.equal(failedSetup.options, undefined, 'A late API callback must not revive a failed document');
 for (let i = 1; i < f.messages.length; i++) assert.ok(f.messages[i].sequence > f.messages[i - 1].sequence);
 f.events.pagehide(); const retiredCount = f.messages.length;
 assert.equal(f.cleared.length, 1); assert.equal(f.poll(), false);

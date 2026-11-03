@@ -238,10 +238,11 @@ final class PracticeSession: ObservableObject {
         var saved = practiceStore.state(for: key)
         // Loading/cueing and offline failures must not overwrite a saved
         // position with the player's reset-to-zero placeholder.
-        if pendingPracticeRestore == nil, practiceRestoreTarget == nil, player.isReady,
+        if pendingPracticeRestore == nil, player.isReady,
            player.clockSourceName != "advertisement",
            ProcessInfo.processInfo.systemUptime - restoredAt >= 2 {
-            saved.position = player.interpolatedPosition
+            if practiceRestoreTarget == nil { saved.position = player.interpolatedPosition }
+            // Accepted speed is independent of a seek still awaiting motion.
             saved.rate = player.rate
         }
         saved.loops = namedLoops
@@ -384,7 +385,9 @@ final class PracticeSession: ObservableObject {
 
     func tick() {
         restorePracticeIfReady()
-        if let target = practiceRestoreTarget, player.isReady, abs(player.position - target) < 0.5 {
+        if let target = practiceRestoreTarget, player.isReady,
+           PracticeRestorePolicy.isAcknowledged(target: target, position: player.position,
+                                                playbackIsAdvancing: player.hasFreshPlaybackClock) {
             practiceRestoreTarget = nil
         }
         if countInBeat != nil && (!player.isReady || (countInBeat != 0 && player.isPlaying)) { cancelCountIn() }

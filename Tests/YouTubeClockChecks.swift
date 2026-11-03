@@ -45,6 +45,25 @@ import Foundation
         bridge.reset()
         precondition(bridge.accept(payload(1, timestamp), now: 100, wallTime: timestamp / 1_000) != nil)
 
+        var terminal = YouTubePlayerClock()
+        precondition(terminal.accept(payload(1, timestamp), now: 100, wallTime: timestamp / 1_000) != nil)
+        var delayedError = payload(2, timestamp + 100)
+        delayedError["kind"] = "error"
+        precondition(terminal.acceptTerminalError(delayedError, wallTime: timestamp / 1_000 + 5),
+                     "A terminal error queued during suspension must not expire like a clock sample")
+        precondition(!terminal.acceptTerminalError(delayedError, wallTime: timestamp / 1_000 + 5),
+                     "Duplicate terminal events must not be accepted")
+        var nonTerminal = payload(3, timestamp + 200)
+        nonTerminal["kind"] = "snapshot"
+        precondition(!terminal.acceptTerminalError(nonTerminal, wallTime: timestamp / 1_000 + 5))
+        var futureError = payload(3, timestamp + 10_000)
+        futureError["kind"] = "error"
+        precondition(!terminal.acceptTerminalError(futureError, wallTime: timestamp / 1_000 + 5))
+        var expiredClock = payload(3, timestamp + 200)
+        expiredClock["kind"] = "snapshot"
+        precondition(terminal.accept(expiredClock, now: 105, wallTime: timestamp / 1_000 + 5) == nil,
+                     "Accepting lifecycle errors must not relax clock freshness")
+
         let frame = URL(string: "https://www.youtube.com/embed/abcdefghijk")!
         var media = YouTubeDOMClock()
         var gate = PlaybackClockGate()

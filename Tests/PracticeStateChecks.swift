@@ -26,6 +26,16 @@ import Foundation
         let disabled = PracticeStateStore(defaults: defaults, enabled: false)
         disabled.save(restored, for: key)
         precondition(defaults.data(forKey: PracticeStateStore.preferenceKey) == Data("invalid".utf8))
+        precondition(!PracticeRestorePolicy.isAcknowledged(target: 100, position: 0, playbackIsAdvancing: false),
+                     "A cue's frozen zero must not overwrite saved progress")
+        precondition(PracticeRestorePolicy.isAcknowledged(target: 100, position: 100.1, playbackIsAdvancing: false),
+                     "A paused seek acknowledgement must release restore protection")
+        precondition(!PracticeRestorePolicy.isAcknowledged(target: 100, position: 101, playbackIsAdvancing: false))
+        precondition(PracticeRestorePolicy.isAcknowledged(target: 100, position: 101, playbackIsAdvancing: true),
+                     "An off-target seek followed by confirmed playback must allow later saves")
+        precondition(PracticeRestorePolicy.isAcknowledged(target: 100, position: 2, playbackIsAdvancing: true),
+                     "A refused seek must not block saving deliberate advancing playback forever")
+        precondition(!PracticeRestorePolicy.isAcknowledged(target: 100, position: .nan, playbackIsAdvancing: true))
         precondition(PracticeCountIn(beats: 4, bpm: 80).isValid)
         precondition(PracticeCountIn(beats: 4, bpm: 80).interval == 0.75)
         precondition(!PracticeCountIn(beats: 4, bpm: 0).isValid)

@@ -177,6 +177,20 @@ struct YouTubePlayerClock {
 
     mutating func reset() { self = YouTubePlayerClock() }
 
+    /// Terminal errors are lifecycle events, not clock observations. Keep their
+    /// sequence/generation ordering but accept delayed delivery for this load.
+    mutating func acceptTerminalError(_ payload: [String: Any], wallTime: Double) -> Bool {
+        guard payload["kind"] as? String == "error",
+              let incoming = payload["sequence"] as? Int, incoming > sequence,
+              let generated = (payload["generatedAt"] as? NSNumber)?.doubleValue,
+              generated.isFinite, generated > 0, wallTime.isFinite,
+              generated / 1_000 <= wallTime + 0.025,
+              generatedAt.map({ generated >= $0 }) ?? true else { return false }
+        sequence = incoming
+        generatedAt = generated
+        return true
+    }
+
     mutating func accept(_ payload: [String: Any], now: Double, wallTime: Double) -> Double? {
         guard let incomingSequence = payload["sequence"] as? Int, incomingSequence > sequence,
               let generated = (payload["generatedAt"] as? NSNumber)?.doubleValue,
@@ -407,9 +421,19 @@ final class YouTubeController: NSObject, ObservableObject, WKScriptMessageHandle
               let payload = message.body as? [String: Any],
               payload["loadID"] as? String == loadID,
               payload["videoID"] as? String == videoID,
-              let kind = payload["kind"] as? String,
-              let playerSampleTime = playerClock.accept(payload, now: ProcessInfo.processInfo.systemUptime,
-                                                        wallTime: Date().timeIntervalSince1970) else { return }
+              let kind = payload["kind"] as? String else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let wallTime = Date().timeIntervalSince1970
+        let playerSampleTime: Double
+        if kind == "error" {
+            // Identity and main-frame validation above still apply. An old
+            // error must stop playback, never be treated as fresh media time.
+            guard playerClock.acceptTerminalError(payload, wallTime: wallTime) else { return }
+            playerSampleTime = now
+        } else {
+            guard let sample = playerClock.accept(payload, now: now, wallTime: wallTime) else { return }
+            playerSampleTime = sample
+        }
         playerPollGate.received(identity: loadID, at: ProcessInfo.processInfo.systemUptime)
         startClockPolling()
         switch kind {
